@@ -22,6 +22,7 @@ import (
 	"github.com/filecoin-project/go-padreader"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/builtin"
+	miner2 "github.com/filecoin-project/go-state-types/builtin/v13/miner"
 	verifreg13 "github.com/filecoin-project/go-state-types/builtin/v13/verifreg"
 	"github.com/filecoin-project/go-state-types/builtin/v9/verifreg"
 
@@ -1023,32 +1024,35 @@ func (d *CurioStorageDealMarket) processMK20DealIngestion(ctx context.Context) {
 	}
 
 	var deals []struct {
-		ID           string        `db:"id"`
-		SPID         int64         `db:"sp_id"`
-		Client       string        `db:"client"`
-		PieceCID     string        `db:"piece_cid"`
-		PieceSize    int64         `db:"piece_size"`
-		RawSize      int64         `db:"raw_size"`
-		AllocationID sql.NullInt64 `db:"allocation_id"`
-		Duration     int64         `db:"duration"`
-		Url          string        `db:"url"`
-		Count        int           `db:"unassigned_count"`
+		ID           string          `db:"id"`
+		SPID         int64           `db:"sp_id"`
+		Client       string          `db:"client"`
+		PieceCID     string          `db:"piece_cid"`
+		PieceSize    int64           `db:"piece_size"`
+		RawSize      int64           `db:"raw_size"`
+		AllocationID sql.NullInt64   `db:"allocation_id"`
+		Duration     int64           `db:"duration"`
+		Url          string          `db:"url"`
+		Count        int             `db:"unassigned_count"`
+		DDOV1JSON    json.RawMessage `db:"ddo_v1"`
 	}
 
-	err = d.db.Select(ctx, &deals, `SELECT 
-											  id,
-											  MIN(sp_id) AS sp_id,
-											  MIN(client) AS client,
-											  MIN(piece_cid) AS piece_cid,
-											  MIN(piece_size) AS piece_size,
-											  MIN(raw_size) AS raw_size,
-											  MIN(allocation_id) AS allocation_id,
-											  MIN(duration) AS duration,
-											  MIN(url) AS url,
-											  COUNT(*) AS unassigned_count
-											FROM market_mk20_pipeline
-											WHERE aggregated = TRUE AND sector IS NULL
-											GROUP BY id;`)
+	err = d.db.Select(ctx, &deals, `SELECT
+											  p.id,
+											  MIN(p.sp_id) AS sp_id,
+											  MIN(p.client) AS client,
+											  MIN(p.piece_cid) AS piece_cid,
+											  MIN(p.piece_size) AS piece_size,
+											  MIN(p.raw_size) AS raw_size,
+											  MIN(p.allocation_id) AS allocation_id,
+											  MIN(p.duration) AS duration,
+											  MIN(p.url) AS url,
+											  COUNT(*) AS unassigned_count,
+											  d.ddo_v1
+											FROM market_mk20_pipeline p
+											LEFT JOIN market_mk20_deal d ON p.id = d.id
+											WHERE p.aggregated = TRUE AND p.sector IS NULL
+											GROUP BY p.id, d.ddo_v1;`)
 	if err != nil {
 		log.Errorf("getting deals for ingestion: %w", err)
 		return
@@ -1117,7 +1121,27 @@ func (d *CurioStorageDealMarket) processMK20DealIngestion(ctx context.Context) {
 			}
 		}
 
-		// TODO: Attach notifications
+		// Attach notifications from DDO deal if present
+		var notifications []miner2.DataActivationNotification
+		if deal.DDOV1JSON != nil && string(deal.DDOV1JSON) != "null" {
+			var dbDDO mk20.DBDDOV1
+			if err := json.Unmarshal(deal.DDOV1JSON, &dbDDO); err != nil {
+				log.Errorw("failed to unmarshal ddo_v1", "deal", deal.ID, "error", err)
+				continue
+			}
+			if dbDDO.DDO != nil && dbDDO.DDO.NotificationAddress != "" {
+				notifAddr, err := address.NewFromString(dbDDO.DDO.NotificationAddress)
+				if err != nil {
+					log.Errorw("failed to parse notification address", "deal", deal.ID, "address", dbDDO.DDO.NotificationAddress, "error", err)
+					continue
+				}
+				notifications = append(notifications, miner2.DataActivationNotification{
+					Address: notifAddr,
+					Payload: dbDDO.DDO.NotificationPayload,
+				})
+			}
+		}
+
 		pdi := lpiece.PieceDealInfo{
 			DealSchedule: lpiece.DealSchedule{
 				StartEpoch: start,
@@ -1127,6 +1151,7 @@ func (d *CurioStorageDealMarket) processMK20DealIngestion(ctx context.Context) {
 				CID:                   pcid,
 				Size:                  abi.PaddedPieceSize(deal.PieceSize),
 				VerifiedAllocationKey: vak,
+				Notify:                notifications,
 			},
 		}
 

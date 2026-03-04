@@ -154,7 +154,7 @@ func (d *DDOV1) GetDealID(ctx context.Context, db *harmonydb.DB, eth *ethclient.
 	}
 
 	// ABI-encode method call with input
-	callData, err := parsedABI.Pack(method.Name, d.ContractVerifyMethod)
+	callData, err := parsedABI.Pack(method.Name, d.ContractVerifyMethodParams)
 	if err != nil {
 		return -1, ErrServerInternalError, fmt.Errorf("failed to encode call data: %w", err)
 	}

@@ -45,9 +45,15 @@ func (d *Deal) Validate(db *harmonydb.DB, cfg *config.MK20Config, Auth string) (
 		}
 	}()
 
-	err := validateClient(d.Client, Auth)
-	if err != nil {
-		return ErrBadProposal, err
+	// TODO: Re-enable after adding delegation support for DDO Diamond contract deals
+	// Skip client-auth identity check to allow DDO contract to be the deal client
+	// while the EOA wallet authenticates the request
+	//err := validateClient(d.Client, Auth)
+	//if err != nil {
+	//	return ErrBadProposal, err
+	//}
+	if d.Client == "" {
+		return ErrBadProposal, xerrors.Errorf("client is empty")
 	}
 
 	code, err := d.Products.Validate(db, cfg)

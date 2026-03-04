@@ -335,7 +335,7 @@ func (m *MK20) sanitizeDDODeal(ctx context.Context, deal *Deal) (*ProviderDealRe
 	}
 
 	if deal.Products.DDOV1.AllocationId != nil {
-		if size < abi.PaddedPieceSize(verifreg.MinimumVerifiedAllocationSize) {
+		if build.BuildType != build.Build2k && build.BuildType != build.BuildDebug && size < abi.PaddedPieceSize(verifreg.MinimumVerifiedAllocationSize) {
 			return &ProviderDealRejectionInfo{
 				HTTPCode: ErrBadProposal,
 				Reason:   "Verified piece size must be at least 1MB",
